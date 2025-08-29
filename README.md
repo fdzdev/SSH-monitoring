@@ -2,7 +2,7 @@
 
 A comprehensive, self-contained SSH monitoring system that tracks all SSH attempts to your server with geolocation, detailed logging, and real-time monitoring.
 
-## 🚀 Quick Start (3 Steps)
+## 🚀 Quick Start (2 Steps)
 
 ### 1. Clone and Setup
 ```bash
@@ -10,19 +10,13 @@ A comprehensive, self-contained SSH monitoring system that tracks all SSH attemp
 git clone <your-repo-url> ssh-monitor
 cd ssh-monitor
 
-# Make the script executable
-chmod +x ssh_monitor.py
+# Run the complete setup script (as root)
+sudo bash setup.sh
 ```
 
-### 2. Run the Monitor
-```bash
-# Start monitoring (must run as root)
-sudo python3 ssh_monitor.py
-```
+### 2. You're Done! 🎉
 
-### 3. You're Done! ��
-
-The system is now monitoring all SSH attempts in real-time.
+The system is now fully set up and monitoring all SSH attempts in real-time.
 
 ## 📋 What It Tracks
 
@@ -36,7 +30,54 @@ The system is now monitoring all SSH attempts in real-time.
 - ✅ **Raw log lines** for debugging
 - ✅ **Real-time monitoring** with live updates
 
-## ��️ Database Schema
+## 🛠️ System Requirements
+
+- **OS**: Ubuntu/Debian/CentOS/RHEL/Amazon Linux
+- **Python**: Python 3.6+
+- **Permissions**: Must run as root (for reading auth.log)
+
+## 📦 Automatic Setup
+
+The `setup.sh` script automatically:
+
+1. **Detects your OS** and installs dependencies
+2. **Sets up Python environment** with required packages
+3. **Creates SSH monitoring files** (database, logs)
+4. **Installs systemd service** for automatic startup
+5. **Creates management script** (`run.sh`) for easy control
+6. **Integrates with bashrc** - Press `9` to show last SSH attempts
+7. **Tests the system** to ensure everything works
+
+## 🔧 Management Commands
+
+After setup, use the generated `run.sh` script:
+
+```bash
+# Service Management
+sudo ./run.sh start      # Start monitoring service
+sudo ./run.sh stop       # Stop monitoring service
+sudo ./run.sh restart    # Restart service
+sudo ./run.sh status     # Check service status
+
+# Viewing Data
+./run.sh stats           # Show database statistics
+./run.sh recent          # Show recent SSH attempts
+./run.sh failed          # Show failed SSH attempts
+./run.sh logs            # Show real-time logs
+
+# Real-time Monitoring
+./run.sh monitor         # Start live monitoring
+
+# Service Management
+sudo ./run.sh install    # Install as system service
+sudo ./run.sh uninstall  # Remove system service
+```
+
+## ⌨️ Quick Access
+
+After setup, press the **`9` key** in any terminal to instantly see the last 10 SSH attempts!
+
+## 📊 Database Schema
 
 ```sql
 CREATE TABLE ssh_attempts (
@@ -58,19 +99,25 @@ CREATE TABLE ssh_attempts (
 
 ## 🔍 Viewing Results
 
-### Real-time Monitoring
+### Quick Commands
 ```bash
-# Watch live SSH attempts
-sudo python3 ssh_monitor.py
+# View recent attempts
+./run.sh recent
+
+# View failed attempts only
+./run.sh failed
+
+# View statistics
+./run.sh stats
+
+# View service logs
+./run.sh logs
 ```
 
-### Database Queries
+### Direct Database Queries
 ```bash
 # View all attempts
 sqlite3 /var/log/ssh_attempts.db "SELECT * FROM ssh_attempts ORDER BY timestamp DESC LIMIT 20;"
-
-# View failed attempts only
-sqlite3 /var/log/ssh_attempts.db "SELECT timestamp, ip_address, username, failure_reason FROM ssh_attempts WHERE success = 0 ORDER BY timestamp DESC;"
 
 # View attempts from specific IP
 sqlite3 /var/log/ssh_attempts.db "SELECT * FROM ssh_attempts WHERE ip_address = '192.168.1.1';"
@@ -79,74 +126,6 @@ sqlite3 /var/log/ssh_attempts.db "SELECT * FROM ssh_attempts WHERE ip_address = 
 sqlite3 /var/log/ssh_attempts.db "SELECT * FROM ssh_attempts WHERE timestamp > datetime('now', '-1 hour');"
 ```
 
-### Log File
-```bash
-# View monitoring log
-tail -f /var/log/ssh_attempts.log
-
-# View last 100 entries
-tail -n 100 /var/log/ssh_attempts.log
-```
-
-## 🛠️ System Requirements
-
-- **OS**: Ubuntu/Debian (tested on Ubuntu 20.04+)
-- **Python**: Python 3.6+
-- **Tools**: `tail`, `curl`
-- **Permissions**: Must run as root (for reading auth.log)
-
-## 📦 Installation
-
-### Automatic (Ubuntu/Debian)
-```bash
-# Install required packages
-sudo apt update
-sudo apt install python3 python3-pip sqlite3 curl
-
-# Clone and run
-git clone <your-repo-url> ssh-monitor
-cd ssh-monitor
-chmod +x ssh_monitor.py
-sudo python3 ssh_monitor.py
-```
-
-### Manual
-```bash
-# Install Python dependencies
-pip3 install sqlite3
-
-# Install system tools
-sudo apt install curl sqlite3
-```
-
-## �� Configuration
-
-### Custom Log Path
-Edit the script to change log locations:
-```python
-self.db_path = '/var/log/ssh_attempts.db'    # Database location
-self.log_path = '/var/log/ssh_attempts.log'  # Monitor log location
-```
-
-### Monitoring Frequency
-Change how often it checks logs:
-```python
-time.sleep(30)  # Check every 30 seconds
-```
-
-### Geolocation Services
-The script uses multiple geolocation services:
-- **Primary**: ipinfo.io (free tier)
-- **Fallback**: ip-api.com (free)
-
-## 📊 Statistics
-
-The monitor shows real-time statistics:
-- Total SSH attempts
-- Successful vs failed attempts
-- Unique IP addresses
-- Recent activity (last hour)
-
 ## 🚨 Security Features
 
 - **Comprehensive logging** of all SSH activity
@@ -154,44 +133,20 @@ The monitor shows real-time statistics:
 - **Failure reason tracking** for security analysis
 - **Real-time monitoring** for immediate response
 - **Database indexing** for fast queries
+- **Automatic service startup** on boot
 
 ## 🔄 Running as a Service
 
-### Create Systemd Service
+The setup script automatically creates and enables a systemd service:
+
 ```bash
-sudo nano /etc/systemd/system/ssh-monitor.service
-```
-
-**Service content:**
-```ini
-[Unit]
-Description=SSH Monitor Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /path/to/ssh_monitor.py
-Restart=always
-RestartSec=10
-User=root
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Enable Service
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable ssh-monitor
-sudo systemctl start ssh-monitor
-
-# Check status
+# Check service status
 sudo systemctl status ssh-monitor
 
-# View logs
+# View service logs
 sudo journalctl -u ssh-monitor -f
+
+# The service starts automatically on boot
 ```
 
 ## 🧪 Testing
@@ -202,22 +157,21 @@ From another machine:
 ssh username@your_server_ip
 ```
 
-### Check Database
+### Check Monitoring
 ```bash
-sqlite3 /var/log/ssh_attempts.db "SELECT * FROM ssh_attempts ORDER BY timestamp DESC LIMIT 1;"
-```
-
-### Check Logs
-```bash
-tail -f /var/log/ssh_attempts.log
+# Press 9 in terminal to see last attempts
+# Or use:
+./run.sh recent
 ```
 
 ## 📁 File Locations
 
-- **Script**: `/path/to/ssh_monitor.py`
+- **Script**: `./ssh_tracker.py`
 - **Database**: `/var/log/ssh_attempts.db`
 - **Monitor Log**: `/var/log/ssh_attempts.log`
 - **System Log**: `/var/log/auth.log` (existing)
+- **Service**: `/etc/systemd/system/ssh-monitor.service`
+- **Management**: `./run.sh`
 
 ## 🚀 Advanced Usage
 
@@ -270,32 +224,26 @@ SELECT * FROM ssh_attempts;
 
 **Permission Denied**
 ```bash
-# Run as root
-sudo python3 ssh_monitor.py
+# Run setup as root
+sudo bash setup.sh
+```
+
+**Service Not Starting**
+```bash
+# Check service status
+sudo ./run.sh status
+
+# View logs
+sudo ./run.sh logs
 ```
 
 **Database Locked**
 ```bash
 # Check if another instance is running
-ps aux | grep ssh_monitor
+ps aux | grep ssh_tracker
 
-# Kill existing process
-sudo pkill -f ssh_monitor
-```
-
-**Log File Not Found**
-```bash
-# Check if auth.log exists
-ls -la /var/log/auth.log
-
-# Check permissions
-sudo ls -la /var/log/auth.log
-```
-
-### Debug Mode
-```bash
-# Run with verbose output
-sudo python3 -u ssh_monitor.py
+# Restart service
+sudo ./run.sh restart
 ```
 
 ## 📈 Performance
@@ -312,33 +260,31 @@ sudo python3 -u ssh_monitor.py
 - **Data retention**: Keep as long as you want
 - **GDPR compliant**: No personal data sent externally
 
-## �� Contributing
-
-Feel free to submit issues, feature requests, or pull requests!
-
-## 📄 License
-
-This project is open source and available under the MIT License.
-
----
-
 ## 🎯 Quick Commands Reference
 
 ```bash
-# Start monitoring
-sudo python3 ssh_monitor.py
+# Setup (one-time)
+sudo bash setup.sh
 
-# View recent attempts
-sqlite3 /var/log/ssh_attempts.db "SELECT * FROM ssh_attempts ORDER BY timestamp DESC LIMIT 10;"
+# Daily Management
+./run.sh start          # Start monitoring
+./run.sh stop           # Stop monitoring
+./run.sh stats          # View statistics
+./run.sh recent         # View recent attempts
 
-# View failed attempts
-sqlite3 /var/log/ssh_attempts.db "SELECT * FROM ssh_attempts WHERE success = 0;"
-
-# View log file
-tail -f /var/log/ssh_attempts.log
-
-# Stop monitoring
-Ctrl+C
+# Quick Access
+Press '9' in terminal   # Show last 10 SSH attempts
 ```
 
-**That's it! Clone, run, and you're done! 🚀**
+## 🎉 That's it! 
+
+**Clone → Run `sudo bash setup.sh` → You're done! 🚀**
+
+The system automatically:
+- ✅ Installs all dependencies
+- ✅ Sets up monitoring
+- ✅ Creates system service
+- ✅ Integrates with bashrc
+- ✅ Starts monitoring SSH attempts
+
+No manual configuration needed!
