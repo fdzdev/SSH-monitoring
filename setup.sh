@@ -38,6 +38,58 @@ check_root() {
     fi
 }
 
+# Function to check virtual environment
+check_virtual_env() {
+    # Check multiple ways to detect virtual environment
+    VENV_PATH=""
+    
+    # Method 1: Check VIRTUAL_ENV environment variable
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        VENV_PATH="$VIRTUAL_ENV"
+        print_status "Virtual environment detected via VIRTUAL_ENV: $VENV_PATH"
+    # Method 2: Check if we're in a virtual environment directory
+    elif [[ -f "bin/activate" ]] && [[ -d "bin" ]] && [[ -f "bin/python" ]]; then
+        VENV_PATH="$(pwd)"
+        print_status "Virtual environment detected in current directory: $VENV_PATH"
+    # Method 3: Check parent directories for virtual environment
+    elif [[ -f "../bin/activate" ]] && [[ -d "../bin" ]] && [[ -f "../bin/python" ]]; then
+        VENV_PATH="$(cd .. && pwd)"
+        print_status "Virtual environment detected in parent directory: $VENV_PATH"
+    # Method 4: Check if we're in a subdirectory of a virtual environment
+    else
+        CURRENT_DIR=$(pwd)
+        while [[ "$CURRENT_DIR" != "/" ]]; do
+            if [[ -f "$CURRENT_DIR/bin/activate" ]] && [[ -d "$CURRENT_DIR/bin" ]] && [[ -f "$CURRENT_DIR/bin/python" ]]; then
+                VENV_PATH="$CURRENT_DIR"
+                print_status "Virtual environment detected in: $VENV_PATH"
+                break
+            fi
+            CURRENT_DIR=$(dirname "$CURRENT_DIR")
+        done
+    fi
+    
+    if [[ -n "$VENV_PATH" ]]; then
+        # Check if virtual environment is properly set up
+        if [[ ! -f "$VENV_PATH/bin/python" ]]; then
+            print_error "Virtual environment Python not found: $VENV_PATH/bin/python"
+            print_error "Please activate your virtual environment properly"
+            exit 1
+        fi
+        
+        if [[ ! -f "$VENV_PATH/bin/pip" ]]; then
+            print_error "Virtual environment pip not found: $VENV_PATH/bin/pip"
+            print_error "Please activate your virtual environment properly"
+            exit 1
+        fi
+        
+        # Export for use in other functions
+        export VIRTUAL_ENV="$VENV_PATH"
+        print_success "Virtual environment is properly configured: $VENV_PATH"
+    else
+        print_status "No virtual environment detected, using system Python"
+    fi
+}
+
 # Function to detect OS
 detect_os() {
     if [[ -f /etc/os-release ]]; then
@@ -78,15 +130,36 @@ install_dependencies() {
 setup_python() {
     print_status "Setting up Python environment..."
     
-    # Check Python version
-    python3 --version
-    
-    # Install Python dependencies if needed
-    if command -v pip3 &> /dev/null; then
-        pip3 install --upgrade pip
+    # Check if we're in a virtual environment
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        print_status "Virtual environment detected: $VIRTUAL_ENV"
+        print_status "Using virtual environment Python"
+        
+        # Use the virtual environment Python
+        PYTHON_CMD="$VIRTUAL_ENV/bin/python"
+        PIP_CMD="$VIRTUAL_ENV/bin/pip"
+        
+        # Check Python version
+        $PYTHON_CMD --version
+        
+        # Upgrade pip in virtual environment
+        if [[ -f "$PIP_CMD" ]]; then
+            $PIP_CMD install --upgrade pip
+        fi
+        
+        print_success "Virtual environment Python ready"
+    else
+        # Check system Python version
+        python3 --version
+        
+        # Install Python dependencies if needed
+        if command -v pip3 &> /dev/null; then
+            # Skip pip upgrade in system environment to avoid externally-managed error
+            print_status "Skipping pip upgrade in system environment"
+        fi
+        
+        print_success "System Python environment ready"
     fi
-    
-    print_success "Python environment ready"
 }
 
 # Function to setup SSH monitoring
@@ -107,7 +180,46 @@ setup_ssh_monitoring() {
     chmod 644 /var/log/ssh_attempts.db
     chmod 644 /var/log/ssh_attempts.log
     
+    # Update database schema if needed
+    update_database_schema
+    
     print_success "SSH monitoring files created"
+}
+
+# Function to update database schema
+update_database_schema() {
+    print_status "Checking database schema..."
+    
+    if [[ -f /var/log/ssh_attempts.db ]]; then
+        # Check if country column exists
+        if ! sqlite3 /var/log/ssh_attempts.db "SELECT country FROM ssh_attempts LIMIT 1;" 2>/dev/null; then
+            print_status "Adding missing columns to database..."
+            
+            # Add missing columns
+            sqlite3 /var/log/ssh_attempts.db "
+            ALTER TABLE ssh_attempts ADD COLUMN country TEXT DEFAULT 'Unknown';
+            ALTER TABLE ssh_attempts ADD COLUMN city TEXT DEFAULT 'Unknown';
+            ALTER TABLE ssh_attempts ADD COLUMN isp TEXT DEFAULT 'Unknown';
+            ALTER TABLE ssh_attempts ADD COLUMN created_at TEXT;
+            "
+            
+            # Update existing records with current timestamp
+            sqlite3 /var/log/ssh_attempts.db "
+            UPDATE ssh_attempts SET created_at = datetime('now') WHERE created_at IS NULL;
+            "
+            
+            # Create missing indexes
+            sqlite3 /var/log/ssh_attempts.db "
+            CREATE INDEX IF NOT EXISTS idx_port ON ssh_attempts(port);
+            CREATE INDEX IF NOT EXISTS idx_country ON ssh_attempts(country);
+            CREATE INDEX IF NOT EXISTS idx_city ON ssh_attempts(city);
+            "
+            
+            print_success "Database schema updated"
+        else
+            print_status "Database schema is up to date"
+        fi
+    fi
 }
 
 # Function to create systemd service
@@ -116,6 +228,15 @@ create_systemd_service() {
     
     # Get current directory
     CURRENT_DIR=$(pwd)
+    
+    # Determine Python path
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        PYTHON_PATH="$VIRTUAL_ENV/bin/python"
+        print_status "Using virtual environment Python: $PYTHON_PATH"
+    else
+        PYTHON_PATH="/usr/bin/python3"
+        print_status "Using system Python: $PYTHON_PATH"
+    fi
     
     # Create service file
     cat > /etc/systemd/system/ssh-monitor.service << EOF
@@ -126,7 +247,7 @@ Wants=ssh.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 ${CURRENT_DIR}/ssh_tracker.py
+ExecStart=${PYTHON_PATH} ${CURRENT_DIR}/ssh_tracker.py
 WorkingDirectory=${CURRENT_DIR}
 Restart=always
 RestartSec=10
@@ -134,6 +255,15 @@ User=root
 StandardOutput=journal
 StandardError=journal
 Environment=PYTHONUNBUFFERED=1
+EOF
+    
+    # Add virtual environment activation if needed
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        echo "Environment=PATH=${VIRTUAL_ENV}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> /etc/systemd/system/ssh-monitor.service
+    fi
+    
+    # Complete the service file
+    cat >> /etc/systemd/system/ssh-monitor.service << EOF
 
 [Install]
 WantedBy=multi-user.target
@@ -293,6 +423,7 @@ show_recent() {
                 WHEN 1 THEN 'SUCCESS' 
                 ELSE 'FAILED' 
             END as status,
+            port,
             country,
             city
         FROM ssh_attempts 
@@ -315,6 +446,7 @@ show_failed() {
             ip_address,
             username,
             failure_reason,
+            port,
             country,
             city
         FROM ssh_attempts 
@@ -342,7 +474,11 @@ start_monitoring() {
         echo ""
         
         # Start the Python tracker
-        python3 ssh_tracker.py
+        if [[ -n "$VIRTUAL_ENV" ]]; then
+            $VIRTUAL_ENV/bin/python ssh_tracker.py
+        else
+            python3 ssh_tracker.py
+        fi
     else
         print_error "Database not found. Start the service first."
         exit 1
@@ -362,7 +498,15 @@ install_service() {
     
     # Create service file
     CURRENT_DIR=$(pwd)
-    cat > /etc/systemd/system/ssh-monitor.service << EOF
+    
+    # Determine Python path
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        PYTHON_PATH="$VIRTUAL_ENV/bin/python"
+    else
+        PYTHON_PATH="/usr/bin/python3"
+    fi
+    
+    cat > /etc/systemd/system/ssh-monitor.service << SERVICE_EOF
 [Unit]
 Description=SSH Monitor Service
 After=network.target ssh.service
@@ -370,7 +514,7 @@ Wants=ssh.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 ${CURRENT_DIR}/ssh_tracker.py
+ExecStart=${PYTHON_PATH} ${CURRENT_DIR}/ssh_tracker.py
 WorkingDirectory=${CURRENT_DIR}
 Restart=always
 RestartSec=10
@@ -378,10 +522,17 @@ User=root
 StandardOutput=journal
 StandardError=journal
 Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
+SERVICE_EOF
+    
+    # Add virtual environment activation if needed
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        echo "Environment=PATH=${VIRTUAL_ENV}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> /etc/systemd/system/ssh-monitor.service
+    fi
+    
+    # Add Install section
+    echo "" >> /etc/systemd/system/ssh-monitor.service
+    echo "[Install]" >> /etc/systemd/system/ssh-monitor.service
+    echo "WantedBy=multi-user.target" >> /etc/systemd/system/ssh-monitor.service
     
     # Reload systemd and enable service
     systemctl daemon-reload
@@ -489,6 +640,7 @@ ssh_monitor_show_last() {
                 WHEN 1 THEN '✅ SUCCESS' 
                 ELSE '❌ FAILED' 
             END as status,
+            port,
             country,
             city
         FROM ssh_attempts 
@@ -615,6 +767,9 @@ main() {
     
     # Check if running as root
     check_root
+    
+    # Check virtual environment
+    check_virtual_env
     
     # Detect OS
     detect_os
